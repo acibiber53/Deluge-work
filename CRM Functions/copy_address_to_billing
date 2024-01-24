@@ -1,0 +1,27 @@
+try 
+{
+	// Get the record
+	response = zoho.crm.getRecordById("Accounts",account_id);
+	// Take required information
+	building_name = response.get("Building_name_number");
+	street = response.get("Single_Line_5");
+	city = response.get("Single_Line_6");
+	county = response.get("Single_Line_7");
+	post_code = response.get("Single_Line_8");
+	// Prepare new information to upload
+	billing_info = Map();
+	billing_info.put("Billing_name_number",building_name);
+	billing_info.put("Billing_Street",street);
+	billing_info.put("Billing_City",city);
+	billing_info.put("Billing_County",county);
+	billing_info.put("Billing_Post_Code",post_code);
+	info billing_info;
+	response = zoho.crm.updateRecord("Accounts",account_id,billing_info);
+	info response;
+	return "The address has been succesfully copied to the billing side! Page will refresh after you close this message. If it doesn't, please refresh it manually to see the latest changes.";
+}
+catch (e)
+{
+	return "Error: " + e;
+}
+return "";
