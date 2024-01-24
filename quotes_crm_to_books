@@ -1,0 +1,145 @@
+//
+//
+// Basic Info
+quote_id = "";
+books_org_id = "";
+//
+//
+// Get Quote Information
+quote = zoho.crm.getRecordById("Quotes",quote_id);
+//info quote;
+//
+// Books -- CRM
+// Information to Get:
+// Customer Name -- Account Name
+// Quote Date -- Created Date
+// Expiry Date -- Valid Till
+// Salesperson -- Quote Owner
+// Item details -- Quoted Items
+// Quote# -- Quote No
+//
+// Info that's missed in the Books but exists in CRM
+// Payment Terms/Details
+// Contact Name
+// Description
+//
+// Info in Books but missing in CRM
+// Customer Notes
+account_name = quote.get("Account_Name");
+created_date = quote.get("Created_Date");
+created_date = created_date.toText("yyyy-MM-dd");
+valid_till = quote.get("Valid_Till");
+valid_till = valid_till.toText("yyyy-MM-dd");
+quote_owner = quote.get("Owner");
+quoted_items = quote.get("Product_Details");
+quote_no = quote.get("Quote_Number_1");
+//
+//
+// Fetch data from Books for detailed information
+//
+// Account Name
+actual_account_name = account_name.get("name");
+search_param = {"contact_name":actual_account_name};
+books_customer_response = zoho.books.getRecords("contacts",books_org_id,search_param);
+books_customer_list = books_customer_response.get("contacts");
+if(books_customer_list.size() > 0)
+{
+	info "Returned something";
+	books_customer = books_customer_list.get(0);
+	books_customer_id = books_customer.get("contact_id");
+}
+else
+{
+	return "Couldn't find a customer on Zoho Books with this name. Please wait until sync between Books and CRM work after you create your contacts in CRM.";
+}
+//
+// Quoted Items
+line_items = list();
+for each  quoted_item in quoted_items
+{
+	product_name = quoted_item.get("product").get("name");
+	quantity = quoted_item.get("quantity");
+	discount = quoted_item.get("Discount");
+	total_after_discount = quoted_item.get("total_after_discount");
+	net_total = quoted_item.get("net_total");
+	tax = quoted_item.get("Tax");
+	list_price = quoted_item.get("list_price");
+	unit_price = quoted_item.get("unit_price");
+	total = quoted_item.get("total");
+	product_description = quoted_item.get("product_description");
+	search_param_product = {"name":product_name};
+	books_product_response = zoho.books.getRecords("items",books_org_id,search_param_product);
+	books_product_list = books_product_response.get("items");
+	if(books_product_list.size() > 0)
+	{
+		info "Returned an item";
+		books_product = books_product_list.get(0);
+		books_product_id = books_product.get("item_id");
+		line_item = Map();
+		line_item.put("item_id",books_product_id);
+		line_item.put("description",product_description);
+		line_item.put("rate",list_price);
+		line_item.put("quantity",quantity);
+		line_item.put("discount_amount",discount);
+		if(tax == "0")
+		{
+			info "No tax in this:";
+			line_item.put("tax_id","");
+		}
+		line_items.add(line_item);
+	}
+	else
+	{
+		return "Couldn't find one of the line item in Zoho Books. Please wait until sync between Books and CRM to work after you create your products in CRM.";
+	}
+}
+//
+// Salesperson - Owner
+quote_owner_email = quote_owner.get("email");
+search_param_salesperson = {"salesperson_email":quote_owner_email};
+books_salesperson_response = zoho.books.getRecords("salespersons",books_org_id,search_param_salesperson);
+books_salesperson_list = books_salesperson_response.get("data");
+books_salesperson_id = "";
+for each  salesperson in books_salesperson_list
+{
+	sp_email = salesperson.get("salesperson_email");
+	if(sp_email == quote_owner_email)
+	{
+		books_salesperson_id = salesperson.get("salesperson_id");
+		break;
+	}
+}
+if(books_salesperson_id == "")
+{
+	return "Couldn't find the Salesperson in Books. Please re-sync";
+}
+//
+//
+// Books data getting ready for POST
+estimate_data = Map();
+estimate_data.put("customer_id",books_customer_id);
+estimate_data.put("estimate_number",quote_no);
+estimate_data.put("date",created_date);
+estimate_data.put("expiry_date",valid_till);
+estimate_data.put("line_items",line_items);
+estimate_data.put("salesperson_id",books_salesperson_id);
+info estimate_data;
+response = zoho.books.createRecord("estimates",books_org_id,estimate_data);
+response_code = response.get("code");
+response_message = response.get("message");
+if(response_code == "0")
+{
+	return "The function worked successfully. Please check Zoho Books to see the newly created Quote. It will have the same Quote no that starts with SOLIDX.";
+}
+else if(response_code == "1001")
+{
+	return "As Quote numbered " + quote_no + " already exists in the Zoho Books, the function failed to create new quote with same number. Either change the number in CRM Quote or delete the existing Quote from Zoho Books.";
+}
+else if(response_code == "4014")
+{
+	return "Expiry date should be after quote date. Please amend it and click the button again.";
+}
+else
+{
+	return "The function failed to create new quote. Error Code: " + response_code.toText() + ". Error Message: " + response_message;
+}
