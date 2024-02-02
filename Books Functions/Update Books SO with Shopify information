@@ -1,0 +1,306 @@
+// salesorder, organization, and user comes from Books as argument.
+//
+//
+// SO update map
+update_map = Map();
+//
+//
+// Testing?
+testing = true;
+//
+//
+// Creds
+salesorder_id = salesorder.get("salesorder_id");
+organization_id = organization.get("organization_id");
+shopify_access_token = "shopify_access_token";
+store_domain = "mstore_domain";
+api_version = "2023-10";
+gql_endpoint = "https://" + store_domain + ".myshopify.com/admin/api/" + api_version + "/graphql.json";
+if(testing)
+{
+	// info salesorder;
+}
+shopify_order_number = salesorder.get("reference_number");
+if(shopify_order_number == null)
+{
+	info "No Shopify Order Number for this Sales Order!";
+}
+else
+{
+	info "Order Name:";
+	info shopify_order_number;
+}
+//
+//
+// Header for requests
+header_map = Map();
+header_map.put("Content-Type","application/json");
+header_map.put("X-Shopify-Access-Token",shopify_access_token);
+//
+//
+// GraphQL Query Request for Order
+gql_query = "query Order { orders(query: \"name:" + shopify_order_number + "\", first: 1) { nodes { currentTotalDiscountsSet { shopMoney { amount } } currentTotalPriceSet { shopMoney { amount } } displayFinancialStatus displayFulfillmentStatus email transactions { fees { amount { amount } } formattedGateway amountSet { shopMoney { amount } } processedAt status kind paymentMethod } lineItems(first: 10) { nodes { title variantTitle quantity originalUnitPriceSet { shopMoney { amount } } originalTotalSet { shopMoney { amount } } sku customAttributes { key value } } } fulfillments { displayStatus createdAt name } discountApplications(first: 10) { nodes { targetType targetSelection index allocationMethod ... on AutomaticDiscountApplication { __typename allocationMethod index targetSelection targetType title value { ... on MoneyV2 { __typename amount } ... on PricingPercentageValue { __typename percentage } } } value { ... on MoneyV2 { __typename amount } ... on PricingPercentageValue { __typename percentage } } ... on DiscountCodeApplication { __typename allocationMethod code index targetSelection targetType value { ... on MoneyV2 { __typename amount } ... on PricingPercentageValue { __typename percentage } } } ... on ManualDiscountApplication { allocationMethod index targetSelection targetType title value { ... on MoneyV2 { __typename amount } ... on PricingPercentageValue { __typename percentage } } } ... on ScriptDiscountApplication { __typename allocationMethod index targetType targetSelection title value { ... on MoneyV2 { __typename amount } ... on PricingPercentageValue { __typename percentage } } } } } } } }";
+params = Map();
+params.put("query",gql_query);
+response = invokeurl
+[
+	url :gql_endpoint
+	type :POST
+	parameters:params.toString()
+	headers:header_map
+	connection:"shopify_connection"
+];
+if(testing)
+{
+	info response;
+}
+data = response.get("data");
+orders = data.get("orders");
+order_nodes = orders.get("nodes");
+first_node = order_nodes.get(0);
+//
+//
+// Order Basic Information
+order_total_price = first_node.get("currentTotalPriceSet").get("shopMoney").get("amount");
+order_total_discount = first_node.get("currentTotalDiscountsSet").get("shopMoney").get("amount");
+order_financial_status = first_node.get("displayFinancialStatus");
+order_fulfilment_status = first_node.get("displayFulfillmentStatus");
+order_email = first_node.get("email");
+//
+//
+// Order Transactions Handling
+order_transactions = first_node.get("transactions");
+order_payment_gateways = "";
+if(order_transactions.isEmpty())
+{
+	info "No transactions in this order!";
+	order_transaction_fee = "0";
+}
+else
+{
+	order_transaction_fee = 0.0;
+	for each  transaction in order_transactions
+	{
+		gateway = transaction.get("formattedGateway");
+		info "Payment Gateway:";
+		info gateway;
+		if(transaction.get("kind") == "CAPTURE" || transaction.get("kind") == "SALE")
+		{
+			order_payment_gateways = order_payment_gateways.concat(gateway);
+			// If the gateway is one of these two, tt means we don't have a chance to know exactly how much does it cost in transaction fees. So we have 3.5% charge for each payment
+			if(gateway == "Gift Card" || gateway == "Pay Pal Express Checkout")
+			{
+				order_transaction_fee = (order_total_price.toDecimal() * 3.5 / 100).round(2);
+			}
+			else
+			{
+				transaction_fees = transaction.get("fees");
+				if(transaction_fees.isEmpty())
+				{
+					info "No fees for this transaction!";
+				}
+				else
+				{
+					for each  fee in transaction_fees
+					{
+						if(fee.isEmpty())
+						{
+							info "Inside fees, no transaction fee";
+						}
+						else
+						{
+							temp = fee.get("amount").get("amount").toDecimal();
+							order_transaction_fee = order_transaction_fee + temp;
+						}
+					}
+				}
+			}
+		}
+	}
+	info "Total Order Transaction Fee:";
+	info order_transaction_fee;
+}
+//
+//
+// Order Fulfillments Handling
+order_fulfilments = first_node.get("fulfillments");
+info "Total Price:";
+info order_total_price;
+info "Total Discount";
+info order_total_discount;
+info "Financial Status:";
+info order_financial_status;
+info "Fulfillment Status:";
+info order_fulfilment_status;
+//
+//
+// Order Discount Handling
+order_discount_applications = first_node.get("discountApplications");
+if(order_discount_applications.isEmpty())
+{
+	info "No Discount Applications for this order.";
+}
+else
+{
+	info "Discount Applications:";
+	info order_discount_applications;
+	//
+	//
+	// Discount Applications Detailed
+	discount_nodes = order_discount_applications.get("nodes");
+	discount_value = Map();
+	discount_titles = list();
+	discount_summaries = list();
+	discount_codes = list();
+	for each  discount_node in discount_nodes
+	{
+		discount_type = discount_node.get("__typename");
+		info "Discount Type:";
+		info discount_type;
+		if(discount_type == "DiscountCodeApplication")
+		{
+			discount_code = discount_node.get("code");
+			discount_codes.add(discount_code);
+			info "Discount Code:";
+			info discount_code;
+			discount_value = discount_node.get("value");
+			info "Discount Value";
+			info discount_value;
+			gql_query = "{ codeDiscountNodeByCode(code: \"" + discount_code + "\") { codeDiscount { ... on DiscountCodeBasic { title summary } } } }";
+			params = Map();
+			params.put("query",gql_query);
+			response = invokeurl
+			[
+				url :gql_endpoint
+				type :POST
+				parameters:params.toString()
+				headers:header_map
+				connection:"shopify_connection"
+			];
+			if(testing)
+			{
+				info response;
+			}
+			discount_titles.add(response.get("data").get("codeDiscountNodeByCode").get("codeDiscount").get("title"));
+			discount_summaries.add(response.get("data").get("codeDiscountNodeByCode").get("codeDiscount").get("summary"));
+		}
+		else if(discount_type == "AutomaticDiscountApplication")
+		{
+			discount_titles.add(discount_node.get("title"));
+			discount_value = discount_node.get("value");
+		}
+		else if(discount_type == null)
+		{
+			discount_titles.add(discount_node.get("title"));
+		}
+	}
+	info "Discount Titles:";
+	info discount_titles;
+	info "Discount Summary";
+	info discount_summaries;
+}
+info "Order Email:";
+info order_email;
+//
+//
+// Order Line Items handling
+order_line_items = first_node.get("lineItems").get("nodes");
+so_line_items_list = salesorder.get("line_items");
+info "Line Items:";
+update_line_items_list = list();
+for each  line_item in order_line_items
+{
+	line_item_unit_price = line_item.get("originalUnitPriceSet").get("shopMoney").get("amount");
+	line_item_total_price = line_item.get("originalTotalSet").get("shopMoney").get("amount");
+	line_item_title = line_item.get("title");
+	line_item_variant_title = line_item.get("variantTitle");
+	line_item_quantity = line_item.get("quantity");
+	info line_item_title + " - " + line_item_variant_title + " : " + line_item_unit_price + " x " + line_item_quantity + " = " + line_item_total_price;
+	//
+	// Time Date Adjustment
+	line_item_custom_attributes = line_item.get("customAttributes");
+	if(line_item_custom_attributes.isEmpty())
+	{
+		info "No custom attributes for this line item.";
+	}
+	else
+	{
+		desc_for_lineitem = "";
+		for each  attribute in line_item_custom_attributes
+		{
+			key = attribute.get("key");
+			desc_for_lineitem = desc_for_lineitem.concat(key);
+			desc_for_lineitem = desc_for_lineitem.concat(" : ");
+			if(key == "Date")
+			{
+				line_item_date = attribute.get("value");
+				desc_for_lineitem = desc_for_lineitem.concat(line_item_date);
+			}
+			else if(key == "Time")
+			{
+				line_item_time = attribute.get("value");
+				desc_for_lineitem = desc_for_lineitem.concat(line_item_time);
+			}
+			desc_for_lineitem = desc_for_lineitem.concat(", ");
+		}
+		info "Description for Lineitem:";
+		info desc_for_lineitem;
+	}
+	update_line_item_map = Map();
+	for each  so_line_item in so_line_items_list
+	{
+		so_line_item_id = so_line_item.get("line_item_id");
+		so_line_item_name = so_line_item.get("name");
+		if(so_line_item_name.contains(line_item_title) && so_line_item_name.contains(line_item_variant_title))
+		{
+			update_line_item_map.put("line_item_id",so_line_item_id);
+			update_line_item_map.put("description",desc_for_lineitem);
+			update_line_items_list.add(update_line_item_map);
+		}
+	}
+}
+update_map.put("line_items",update_line_items_list);
+//
+//
+// Adding everything to Sales Order
+custom_fields_list = list();
+//
+// Financial Status
+custom_field = Map();
+custom_field.put("api_name","cf_shopify_financial_status");
+custom_field.put("value",order_financial_status);
+custom_fields_list.add(custom_field);
+//
+// Fulfillment Status
+custom_field = Map();
+custom_field.put("api_name","cf_shopify_fulfillment_status");
+custom_field.put("value",order_fulfilment_status);
+custom_fields_list.add(custom_field);
+//
+// Transaction Fees
+custom_field = Map();
+custom_field.put("api_name","cf_shopify_transaction_fees");
+custom_field.put("value",order_transaction_fee);
+custom_fields_list.add(custom_field);
+//
+// Payment Gateways
+custom_field = Map();
+custom_field.put("api_name","cf_shopify_payment_gateway");
+custom_field.put("value",order_payment_gateways);
+custom_fields_list.add(custom_field);
+//
+// Discount Titles
+custom_field = Map();
+custom_field.put("api_name","cf_discount_titles");
+custom_field.put("value",discount_titles.toText());
+custom_fields_list.add(custom_field);
+//
+// Discount Titles
+custom_field = Map();
+custom_field.put("api_name","cf_discount_codes");
+custom_field.put("value",discount_codes.toText());
+custom_fields_list.add(custom_field);
+update_map.put("custom_fields",custom_fields_list);
+response = zoho.books.updateRecord("salesorders",organization.get("organization_id"),salesorder_id,update_map);
+info "Sales Order Update Response:";
+info response;
