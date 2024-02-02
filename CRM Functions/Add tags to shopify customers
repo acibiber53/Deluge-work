@@ -1,0 +1,42 @@
+//
+//
+// Testing?
+testing = false;
+//
+//
+// Creds
+shopify_access_token = "shopify_access_token";
+store_domain = "store_domain";
+api_version = "2024-01";
+gql_endpoint = "https://" + store_domain + ".myshopify.com/admin/api/" + api_version + "/graphql.json";
+//
+// Header for requests
+header_map = Map();
+header_map.put("Content-Type","application/json");
+header_map.put("X-Shopify-Access-Token",shopify_access_token);
+//
+//
+// GraphQL Query Request for Order
+customer_ids = [];
+for each customer_id in customer_ids
+{
+	customer_graphql_id = "gid://shopify/Customer/" + customer_id.toText();
+	tag_to_add = "tag_to_add";
+	gql_query = "mutation tagsAdd($id: ID!, $tags: [String!]!) { tagsAdd(id: $id, tags: $tags) { node { id } userErrors { field message } } }";
+	params = Map();
+	params.put("query",gql_query);
+	params.put("variables", {"id": customer_graphql_id,  "tags": tag_to_add});
+	response = invokeurl
+	[
+		url :gql_endpoint
+		type :POST
+		parameters:params.toString()
+		headers:header_map
+		connection:"shopify_connection"
+	];
+	if(testing)
+	{
+		info response;
+	}
+}
+return "";
